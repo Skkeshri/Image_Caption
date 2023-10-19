@@ -4,13 +4,18 @@ import tensorflow as tf
 import random
 from PIL import Image, ImageOps
 import numpy as np
-
+from keras.applications.vgg16 import VGG16, preprocess_input
+from keras.models import load_model, Model
+from keras.preprocessing.sequence import pad_sequences
+from keras.preprocessing.image import load_img, img_to_array
+from keras.preprocessing.sequence import pad_sequences
+import pickle
 import warnings
 warnings.filterwarnings("ignore")
 
 
 st.set_page_config(
-    page_title="Mango Leaf Disease Detection",
+    page_title="Image Caption Generation",
     page_icon = ":mango:",
     initial_sidebar_state = 'auto'
 )
@@ -22,17 +27,11 @@ hide_streamlit_style = """
             """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-def prediction_cls(prediction):
-    for key, clss in class_names.items():
-        if np.argmax(prediction)==clss:
-            
-            return key
-
 
 with st.sidebar:
-        st.image('mg.png')
-        st.title("Mangifera Healthika")
-        st.subheader("Accurate detection of diseases present in the mango leaves. This helps an user to easily detect the disease and identify it's cause.")
+        st.image('image.png')
+        st.title("Interactive Image Captioning")
+        st.subheader("Translate visuals into words seamlessly with our Image Captioning tool. Upload an image and watch as our advanced AI narrates the story behind it.")
 
              
         
@@ -42,27 +41,31 @@ def prediction_cls(prediction):
             
             return key
         
-       
-
-    
 
 st.set_option('deprecation.showfileUploaderEncoding', False)
 @st.cache(allow_output_mutation=True)
-def load_model():
+def load_model2():
     model=tf.keras.models.load_model('mango_model.h5')
     return model
+
 with st.spinner('Model is being loaded..'):
-    model=load_model()
-    #model = keras.Sequential()
-    #model.add(keras.layers.Input(shape=(224, 224, 4)))
-    
+    # Load the VGG16 model for feature extraction
+    base_model = VGG16(weights='imagenet')
+    model_vgg16 = Model(inputs=base_model.input, outputs=base_model.get_layer('fc2').output)
+
+    # Load the trained captioning model
+    caption_model_path = 'caption_model.h5'
+    caption_model = load_model(caption_model_path)
+
 
 st.write("""
-         # Mango Disease Detection with Remedy Suggestion
+         # Transforming Pixels into Poetry: Interactive Image Captioning
          """
          )
 
 file = st.file_uploader("", type=["jpg", "png"])
+max_length = 38 
+
 def import_and_predict(image_data, model):
         size = (224,224)    
         image = ImageOps.fit(image_data, size, Image.Resampling.LANCZOS)
@@ -71,58 +74,57 @@ def import_and_predict(image_data, model):
         prediction = model.predict(img_reshape)
         return prediction
 
-        
+
+def generate_caption(model, tokenizer, image, max_length):
+    in_text = '<start>'
+    image = image.reshape((1, -1))  # Reshape the image features to fit the model's expected input shape
+    
+    for _ in range(max_length):
+        sequence = tokenizer.texts_to_sequences([in_text])[0]
+        sequence = pad_sequences([sequence], maxlen=max_length, padding='pre')
+        yhat = model.predict([image, sequence], verbose=0)
+        yhat = np.argmax(yhat)
+        word = tokenizer.index_word.get(yhat, "?")
+        if word == '<end>':
+            break
+        in_text += ' ' + word
+    
+    # Remove <start> and <end> tokens for the final output
+    final_caption = in_text.replace('<start> ', '').replace(' <end>', '')
+    return final_caption
+
+def preprocess_image_uploaded(file, target_size=(224, 224)):
+    # Use PIL to open the image from the uploaded file object
+    img = Image.open(file).resize(target_size)
+    img_array = img_to_array(img)
+    img_array = np.expand_dims(img_array, axis=0)
+    return preprocess_input(img_array)
+
+
+def extract_image_features(model, image_array):
+    features = model.predict(image_array)
+    return features[0]
+
+def caption_uploaded_image(file, tokenizer, max_length):
+    # Preprocess the uploaded image
+    image_array = preprocess_image_uploaded(file)
+    # Extract features using VGG16
+    image_features = extract_image_features(model_vgg16, image_array)
+    # Generate the caption using the trained caption model
+    caption = generate_caption(caption_model, tokenizer, image_features, max_length)
+    return caption
+
+tokenizer_path = 'tokenizer.pkl'
+with open(tokenizer_path, 'rb') as f:
+    tokenizer = pickle.load(f)
+
 if file is None:
     st.text("Please upload an image file")
 else:
     image = Image.open(file)
     st.image(image, use_column_width=True)
-    predictions = import_and_predict(image, model)
-    x = random.randint(98,99)+ random.randint(0,99)*0.01
-    st.sidebar.error("Accuracy : " + str(x) + " %")
-
-    class_names = ['Anthracnose', 'Bacterial Canker','Cutting Weevil','Die Back','Gall Midge','Healthy','Powdery Mildew','Sooty Mould']
-
-    string = "Detected Disease : " + class_names[np.argmax(predictions)]
-    if class_names[np.argmax(predictions)] == 'Healthy':
-        st.balloons()
-        st.sidebar.success(string)
-
-    elif class_names[np.argmax(predictions)] == 'Anthracnose':
-        st.sidebar.warning(string)
-        st.markdown("## Remedy")
-        st.info("Bio-fungicides based on Bacillus subtilis or Bacillus myloliquefaciens work fine if applied during favorable weather conditions. Hot water treatment of seeds or fruits (48°C for 20 minutes) can kill any fungal residue and prevent further spreading of the disease in the field or during transport.")
-
-    elif class_names[np.argmax(predictions)] == 'Bacterial Canker':
-        st.sidebar.warning(string)
-        st.markdown("## Remedy")
-        st.info("Prune flowering trees during blooming when wounds heal fastest. Remove wilted or dead limbs well below infected areas. Avoid pruning in early spring and fall when bacteria are most active.If using string trimmers around the base of trees avoid damaging bark with breathable Tree Wrap to prevent infection.")
-
-    elif class_names[np.argmax(predictions)] == 'Cutting Weevil':
-        st.sidebar.warning(string)
-        st.markdown("## Remedy")
-        st.info("Cutting Weevil can be treated by spraying of insecticides such as Deltamethrin (1 mL/L) or Cypermethrin (0.5 mL/L) or Carbaryl (4 g/L) during new leaf emergence can effectively prevent the weevil damage.")
-
-    elif class_names[np.argmax(predictions)] == 'Die Back':
-        st.sidebar.warning(string)
-        st.markdown("## Remedy")
-        st.info("After pruning, apply copper oxychloride at a concentration of '0.3%' on the wounds. Apply Bordeaux mixture twice a year to reduce the infection rate on the trees. Sprays containing the fungicide thiophanate-methyl have proven effective against B.")
-
-    elif class_names[np.argmax(predictions)] == 'Gall Midge':
-        st.sidebar.warning(string)
-        st.markdown("## Remedy")
-        st.info("Use yellow sticky traps to catch the flies. Cover the soil with plastic foil to prevent larvae from dropping to the ground or pupae from coming out of their nest. Plow the soil regularly to expose pupae and larvae to the sun, which kills them. Collect and burn infested tree material during the season.")
-
-
-    elif class_names[np.argmax(predictions)] == 'Powdery Mildew':
-        st.sidebar.warning(string)
-        st.markdown("## Remedy")
-        st.info("In order to control powdery mildew, three sprays of fungicides are recommended. The first spray comprising of wettable sulphur (0.2%, i.e., 2g per litre of water) should be done when the panicles are 8 -10 cm in size as a preventive spray.")
-
-    elif class_names[np.argmax(predictions)] == 'Sooty Mould':
-        st.sidebar.warning(string)
-        st.markdown("## Remedy")
-        st.info("The insects causing the mould are killed by spraying with carbaryl or phosphomidon 0.03%. It is followed by spraying with a dilute solution of starch or maida 5%. On drying, the starch comes off in flakes and the process removes the black mouldy growth fungi from different plant parts.")
-
-
-
+    # predictions = import_and_predict(image, model)
+    image_path = '/content/dog_standing.jpg'
+    final_caption = caption_uploaded_image(file, tokenizer, max_length)
+    st.balloons()
+    st.sidebar.success(final_caption)
