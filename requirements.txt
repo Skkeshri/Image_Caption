@@ -3,3 +3,4 @@ tensorflow
 Pillow==9.3.0
 numpy==1.19.5
 protobuf
+keras
